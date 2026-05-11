@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<!--
+  ================================================================
+  ToneStack — Guitar Gear Recommender
+  MIS 432: AI in Business · Exam 1, Part 3 (Business Case + Prototype)
+  John Bedlington · Western Washington University
+
+  Prototype answers the question "what gear do I need to buy to
+  sound like [artist X] on a [budget Y]?" by mapping each artist
+  to a curated rig of guitars, amps, and pedals at multiple price
+  points, then filtering against the user's existing gear and
+  budget. The output is a ranked recommendation list with a
+  one-line "why this matters" explanation per item.
+
+  This is a prototype (rule-based with hand-curated artist data),
+  but the product spec is for an AI tool that would synthesize the
+  same answer dynamically across thousands of artists using rig
+  databases, pedal specs, current Reverb pricing, and user reviews.
+  ================================================================
+-->
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ToneStack — Guitar Gear Recommender</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg-primary: #0f0f0f;
+    --bg-card: #1c1c1c;
+    --bg-elevated: #262626;
+    --tube-amber: #FFA500;
+    --tube-amber-glow: rgba(255, 165, 0, 0.4);
+    --tube-amber-soft: rgba(255, 165, 0, 0.12);
+    --text: #f0f0f0;
+    --text-muted: #9ca3af;
+    --border: #333;
+    --essential: #FFA500;
+    --alternative: #6b7280;
+    --gold-rank: #FFD700;
+    --silver-rank: #C0C0C0;
+    --bronze-rank: #CD7F32;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text);
+    line-height: 1.6;
+    min-height: 100vh;
+    padding: 24px;
+  }
+  body::before {
+    content: '';
+    position: fixed;
+    top: -100px;
+    right: -100px;
+    width: 400px;
+    height: 400px;
+    background: radial-gradient(circle, var(--tube-amber-soft) 0%, transparent 70%);
+    pointer-events: none;
+    z-index: 0;
+  }
+
+  .container {
+    max-width: 1100px;
+    margin: 0 auto;
+    position: relative;
+    z-index: 1;
+  }
+
+  /* ---------- HEADER ---------- */
+  header {
+    background: linear-gradient(135deg, #1c1c1c 0%, #2a1a0a 100%);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 36px;
+    margin-bottom: 24px;
+    position: relative;
+    overflow: hidden;
+  }
+  header::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, var(--tube-amber), transparent);
+    box-shadow: 0 0 12px var(--tube-amber-glow);
+  }
+  header h1 {
+    font-size: 32px;
+    font-weight: 800;
+    letter-spacing: -0.5px;
+    margin-bottom: 6px;
+    color: var(--tube-amber);
+    text-shadow: 0 0 20px var(--tube-amber-glow);
+  }
+  header .subtitle {
+    color: var(--text-muted);
+    font-size: 16px;
+  }
+  header .meta {
+    margin-top: 16px;
+    font-size: 12px;
+    color: var(--text-muted);
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  /* ---------- INTRO ---------- */
+  .intro {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--tube-amber);
+    padding: 20px 24px;
+    border-radius: 10px;
+    margin-bottom: 32px;
+  }
+  .intro p { font-size: 14px; color: var(--text-muted); }
+  .intro strong { color: var(--tube-amber); }
+
+  /* ---------- STEP HEADERS ---------- */
+  .step-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .step-number {
+    background: var(--tube-amber);
+    color: var(--bg-primary);
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 800;
+    font-size: 16px;
+    box-shadow: 0 0 12px var(--tube-amber-glow);
+  }
+  .step-title {
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .step-help {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-bottom: 16px;
+    margin-left: 44px;
+  }
+
+  /* ---------- STEP 1: ARTIST SELECTION ---------- */
+  .artist-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 12px;
+    margin-bottom: 32px;
+  }
+  .artist-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-align: center;
+  }
+  .artist-card:hover {
+    border-color: var(--tube-amber);
+    background: var(--bg-elevated);
+  }
+  .artist-card.selected {
+    border-color: var(--tube-amber);
+    background: var(--bg-elevated);
+    box-shadow: 0 0 20px var(--tube-amber-soft);
+  }
+  .artist-name {
+    font-weight: 700;
+    font-size: 15px;
+    margin-bottom: 4px;
+  }
+  .artist-tone {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-style: italic;
+  }
+  .artist-card.selected .artist-name { color: var(--tube-amber); }
+
+  /* ---------- STEP 2: BUDGET ---------- */
+  .budget-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    margin-bottom: 32px;
+  }
+  .budget-display {
+    text-align: center;
+    margin-bottom: 16px;
+  }
+  .budget-amount {
+    font-size: 38px;
+    font-weight: 800;
+    color: var(--tube-amber);
+    text-shadow: 0 0 12px var(--tube-amber-glow);
+  }
+  .budget-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--tube-amber);
+    height: 6px;
+  }
+  .budget-marks {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--text-muted);
+    margin-top: 6px;
+  }
+
+  /* ---------- STEP 3: CURRENT GEAR ---------- */
+  .gear-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    margin-bottom: 32px;
+  }
+  .gear-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 8px;
+  }
+  .gear-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.15s;
+    background: var(--bg-elevated);
+  }
+  .gear-item:hover { border-color: var(--tube-amber); }
+  .gear-item input { margin-right: 10px; cursor: pointer; accent-color: var(--tube-amber); }
+  .gear-item.checked { border-color: var(--tube-amber); background: var(--tube-amber-soft); }
+  .gear-item-text {
+    font-size: 13px;
+  }
+  .gear-item-category {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  /* ---------- ACTION ---------- */
+  .action-bar {
+    text-align: center;
+    margin: 24px 0 32px;
+  }
+  .recommend-btn {
+    background: var(--tube-amber);
+    color: var(--bg-primary);
+    border: none;
+    padding: 16px 36px;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.2s;
+    box-shadow: 0 0 20px var(--tube-amber-soft);
+  }
+  .recommend-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 25px var(--tube-amber-glow);
+  }
+  .recommend-btn:disabled {
+    background: #444;
+    color: #777;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+
+  /* ---------- RESULTS ---------- */
+  .results {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    min-height: 200px;
+  }
+  .results-header {
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 16px;
+    margin-bottom: 20px;
+  }
+  .results-title {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--tube-amber);
+  }
+  .results-summary {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 4px;
+  }
+
+  .empty-state {
+    text-align: center;
+    color: var(--text-muted);
+    padding: 60px 20px;
+    font-size: 14px;
+  }
+  .empty-state-icon {
+    font-size: 32px;
+    color: var(--tube-amber);
+    margin-bottom: 12px;
+  }
+
+  .recommendation {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 18px;
+    margin-bottom: 12px;
+    display: grid;
+    grid-template-columns: 60px 1fr 110px;
+    gap: 16px;
+    align-items: center;
+    transition: all 0.2s;
+  }
+  .recommendation:hover {
+    border-color: var(--tube-amber);
+  }
+  .rec-rank {
+    background: var(--bg-card);
+    color: var(--text);
+    width: 60px;
+    height: 60px;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 22px;
+    font-weight: 800;
+    border: 2px solid var(--border);
+  }
+  .recommendation:nth-child(1) .rec-rank { border-color: var(--gold-rank); color: var(--gold-rank); }
+  .recommendation:nth-child(2) .rec-rank { border-color: var(--silver-rank); color: var(--silver-rank); }
+  .recommendation:nth-child(3) .rec-rank { border-color: var(--bronze-rank); color: var(--bronze-rank); }
+
+  .rec-info {
+    min-width: 0;
+  }
+  .rec-name {
+    font-weight: 700;
+    font-size: 15px;
+    margin-bottom: 4px;
+  }
+  .rec-category {
+    display: inline-block;
+    font-size: 10px;
+    background: var(--bg-card);
+    color: var(--tube-amber);
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-right: 8px;
+    border: 1px solid var(--border);
+  }
+  .rec-tag {
+    display: inline-block;
+    font-size: 10px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .rec-tag.essential { background: var(--tube-amber); color: var(--bg-primary); font-weight: 700; }
+  .rec-tag.alternative { background: var(--bg-card); color: var(--text-muted); border: 1px solid var(--border); }
+  .rec-explanation {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 6px;
+  }
+  .rec-price {
+    text-align: right;
+  }
+  .rec-price-amount {
+    font-size: 22px;
+    font-weight: 800;
+    color: var(--tube-amber);
+  }
+  .rec-price-note {
+    font-size: 11px;
+    color: var(--text-muted);
+  }
+
+  .total-summary {
+    background: var(--bg-elevated);
+    border: 1px solid var(--tube-amber);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin-top: 20px;
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+  }
+  .total-label {
+    font-size: 13px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+  .total-amount {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--tube-amber);
+    margin-top: 2px;
+  }
+  .total-budget-note {
+    text-align: right;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  .total-budget-note .ok { color: var(--tube-amber); }
+  .total-budget-note .over { color: #f87171; }
+
+  .disclaimer {
+    background: var(--bg-card);
+    border: 1px solid #443322;
+    border-left: 3px solid var(--tube-amber);
+    padding: 14px 18px;
+    border-radius: 8px;
+    margin-top: 20px;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+  .disclaimer strong { color: var(--tube-amber); }
+
+  footer {
+    text-align: center;
+    margin-top: 40px;
+    color: var(--text-muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- ========== HEADER ========== -->
+  <header>
+    <h1>TONESTACK</h1>
+    <div class="subtitle">Tell us who you want to sound like, your budget, and what you already own. We'll tell you what to buy.</div>
+    <div class="meta">MIS 432 · Exam 1 Part 3 Prototype · Western Washington University · John Bedlington</div>
+  </header>
+
+  <!-- ========== INTRO ========== -->
+  <div class="intro">
+    <p>
+      Guitarists waste hundreds of dollars chasing tones from forum threads and YouTube videos. <strong>ToneStack</strong> takes one shortcut: pick a tone hero, set a budget, mark what you already own, and get a ranked rig to buy. Each recommendation includes a one-line explanation of why that piece matters for the target tone.
+    </p>
+  </div>
+
+  <!-- ========== STEP 1: TONE HERO ========== -->
+  <div class="step-header">
+    <div class="step-number">1</div>
+    <div class="step-title">Pick your tone hero</div>
+  </div>
+  <div class="step-help">Choose the artist whose tone you want to chase.</div>
+  <div class="artist-grid" id="artistGrid"></div>
+
+  <!-- ========== STEP 2: BUDGET ========== -->
+  <div class="step-header">
+    <div class="step-number">2</div>
+    <div class="step-title">Set your budget</div>
+  </div>
+  <div class="step-help">Drag the slider to set how much you can spend on new gear.</div>
+  <div class="budget-section">
+    <div class="budget-display">
+      <div class="budget-amount" id="budgetAmount">$1,500</div>
+      <div class="budget-label">Total budget</div>
+    </div>
+    <input type="range" id="budgetSlider" min="200" max="5000" step="50" value="1500" oninput="updateBudget()">
+    <div class="budget-marks">
+      <span>$200</span><span>$1,250</span><span>$2,500</span><span>$3,750</span><span>$5,000</span>
+    </div>
+  </div>
+
+  <!-- ========== STEP 3: CURRENT GEAR ========== -->
+  <div class="step-header">
+    <div class="step-number">3</div>
+    <div class="step-title">What do you already own?</div>
+  </div>
+  <div class="step-help">Check anything you already have so we don't recommend it again.</div>
+  <div class="gear-section">
+    <div class="gear-grid" id="currentGearGrid"></div>
+  </div>
+
+  <!-- ========== ACTION ========== -->
+  <div class="action-bar">
+    <button class="recommend-btn" id="recommendBtn" disabled onclick="generateRecommendations()">Build my rig</button>
+  </div>
+
+  <!-- ========== RESULTS ========== -->
+  <div class="results" id="resultsPanel">
+    <div class="empty-state" id="emptyState">
+      <div class="empty-state-icon">⚡</div>
+      Pick a tone hero, set your budget, mark what you own, then click <strong>Build my rig</strong>.
+    </div>
+    <div id="resultsContent" style="display:none;"></div>
+  </div>
+
+  <footer>
+    Built for MIS 432 · AI in Business · Spring 2026 · Prototype
+  </footer>
+
+</div>
+
+<script>
+// ============================================================
+// ARTIST RIG DATA
+// Hand-curated from public rig info (Equipboard, official artist
+// interviews, signature gear lines). Each piece is tagged with
+// price, category, "essential" vs. "alternative" status, and a
+// match score (1-10) for how core it is to that artist's tone.
+// ============================================================
+
+const ARTISTS = {
+  mayer: {
+    name: "John Mayer",
+    tone: "Modern blues, Slow Dancing in a Burning Room",
+    rig: [
+      { name: "Fender Player Stratocaster",   category: "Guitar", price: 800,  essential: true,  match: 10, why: "Mayer's signature tone is built on a Strat with single-coil pickups and a tremolo bridge." },
+      { name: "PRS Silver Sky SE",            category: "Guitar", price: 850,  essential: false, match: 9,  why: "Mayer's signature model. The SE is the affordable version of the Silver Sky." },
+      { name: "Fender Hot Rod Deluxe IV",     category: "Amp",    price: 900,  essential: true,  match: 8,  why: "Closest affordable amp to Mayer's Dumble. Cleans up nicely with the volume knob." },
+      { name: "J. Rockett Archer Klon Clone", category: "Pedal",  price: 230,  essential: true,  match: 10, why: "A true-to-spec Klon Centaur clone for the transparent overdrive in his clean tones." },
+      { name: "Ibanez TS9 Tube Screamer",     category: "Pedal",  price: 120,  essential: true,  match: 9,  why: "Mid-hump push for solos. Mayer stacks this with his Klon for thicker leads." },
+      { name: "Strymon Flint Reverb/Tremolo", category: "Pedal",  price: 300,  essential: false, match: 7,  why: "Adds the spring reverb and tremolo behind Mayer's clean rhythm parts." },
+      { name: "Wampler Tumnus Mini",          category: "Pedal",  price: 150,  essential: false, match: 8,  why: "Cheaper Klon-style alternative if the J. Rockett is over budget." },
+    ],
+  },
+  evh: {
+    name: "Eddie Van Halen",
+    tone: "Brown sound, Eruption, high-gain rock",
+    rig: [
+      { name: "EVH Wolfgang Standard",        category: "Guitar", price: 800,  essential: true,  match: 10, why: "EVH's own signature guitar. Built for the brown sound at a non-custom-shop price." },
+      { name: "Charvel Pro-Mod DK24",         category: "Guitar", price: 1200, essential: false, match: 8,  why: "Superstrat-style alternative with a Floyd Rose for the dive bombs." },
+      { name: "EVH 5150III LBX 15W",          category: "Amp",    price: 900,  essential: true,  match: 10, why: "Bedroom-friendly version of the 5150 stack EVH made famous. Brown sound at low volume." },
+      { name: "MXR Phase 90",                 category: "Pedal",  price: 90,   essential: true,  match: 10, why: "The rotating swirl on Eruption. EVH is the reason this pedal sells." },
+      { name: "MXR EVH Flanger",              category: "Pedal",  price: 180,  essential: true,  match: 9,  why: "Signature pedal tuned for the Unchained intro flange." },
+      { name: "Friedman BE-OD Pedal",         category: "Pedal",  price: 230,  essential: false, match: 7,  why: "Plexi-style overdrive if you cannot afford the 5150 amp yet." },
+    ],
+  },
+  hendrix: {
+    name: "Jimi Hendrix",
+    tone: "Voodoo Child, psychedelic blues",
+    rig: [
+      { name: "Fender Player Stratocaster",   category: "Guitar", price: 800,  essential: true,  match: 10, why: "Hendrix played a Strat almost exclusively. The Player Series is the modern entry-level option." },
+      { name: "Marshall Origin 20H Head",     category: "Amp",    price: 900,  essential: true,  match: 9,  why: "Affordable Plexi-style head. Hendrix played the original Marshall Plexi at every famous show." },
+      { name: "Wampler Plexi-Drive Mini",     category: "Pedal",  price: 200,  essential: false, match: 8,  why: "Plexi tones in a pedal if a real Marshall is out of budget." },
+      { name: "Dunlop JHM1 Hendrix Fuzz Face",category: "Pedal",  price: 170,  essential: true,  match: 10, why: "Signature Fuzz Face circuit. The fuzz behind Purple Haze and Foxy Lady." },
+      { name: "MXR M68 Univibe",              category: "Pedal",  price: 170,  essential: true,  match: 9,  why: "Watery modulation for Machine Gun and Voodoo Child intro." },
+      { name: "Dunlop Cry Baby Wah",          category: "Pedal",  price: 100,  essential: true,  match: 9,  why: "The wah Hendrix used at Woodstock and on Voodoo Child." },
+    ],
+  },
+  gilmour: {
+    name: "David Gilmour",
+    tone: "Pink Floyd, Comfortably Numb solo",
+    rig: [
+      { name: "Fender Player Stratocaster",   category: "Guitar", price: 800,  essential: true,  match: 10, why: "Gilmour's main guitar is a black Strat. Player Series gets you the sound at an entry price." },
+      { name: "Reeves Custom 50 Hiwatt Clone",category: "Amp",    price: 1800, essential: true,  match: 10, why: "Hiwatt-style head is the foundation of the Pink Floyd live tone. Big clean headroom." },
+      { name: "Vox AC15C1",                   category: "Amp",    price: 900,  essential: false, match: 7,  why: "Cheaper alternative if Hiwatt-class is out of budget. Will not have the same clean headroom." },
+      { name: "Electro-Harmonix Big Muff Pi", category: "Pedal",  price: 90,   essential: true,  match: 10, why: "The fuzz on Comfortably Numb. Cannot fake this with a different fuzz." },
+      { name: "EHX Stereo Electric Mistress", category: "Pedal",  price: 170,  essential: true,  match: 9,  why: "Flange/chorus modulation behind every Gilmour clean part since The Wall." },
+      { name: "Boss DD-8 Digital Delay",      category: "Pedal",  price: 170,  essential: true,  match: 9,  why: "Long delay tails are core to the Gilmour sound. Set tempo with the tap switch." },
+    ],
+  },
+  edge: {
+    name: "The Edge",
+    tone: "U2, Where the Streets Have No Name",
+    rig: [
+      { name: "Fender Vintera 50s Stratocaster",category: "Guitar", price: 1200, essential: true, match: 9,  why: "Edge plays Strats almost exclusively. Vintera adds the vintage neck profile he prefers." },
+      { name: "Fender Player Telecaster",     category: "Guitar", price: 850,  essential: false, match: 8,  why: "Edge's other main guitar (Streets uses a Tele). Cheaper than a Strat if you only get one." },
+      { name: "Vox AC15C1",                   category: "Amp",    price: 900,  essential: true,  match: 10, why: "Edge's signature amp brand. AC15 gets you 80% of the AC30 sound at half the price." },
+      { name: "Electro-Harmonix Deluxe Memory Man",category:"Pedal",price: 300, essential: true,  match: 10, why: "The dotted-eighth delay that defines Streets and Where The Streets Have No Name. Non-negotiable." },
+      { name: "Keeley Compressor Plus",       category: "Pedal",  price: 200,  essential: true,  match: 8,  why: "Tightens the picking dynamics so the delays sit cleanly behind the chord rhythm." },
+      { name: "TC Electronic Flashback 2",    category: "Pedal",  price: 130,  essential: false, match: 7,  why: "Cheaper digital delay alternative to the Memory Man. Less analog warmth but tap tempo built in." },
+    ],
+  },
+  srv: {
+    name: "Stevie Ray Vaughan",
+    tone: "Texas blues, Pride and Joy",
+    rig: [
+      { name: "Fender Player Stratocaster",   category: "Guitar", price: 800,  essential: true,  match: 10, why: "SRV is synonymous with the Strat. Heavy strings (.013s) tuned a half-step down for that fat tone." },
+      { name: "Fender '65 Princeton Reverb Reissue",category:"Amp",price:1500, essential: true,  match: 10, why: "SRV used Vibroverbs and Super Reverbs. The Princeton is the bedroom-friendly Fender clean amp." },
+      { name: "Fender Hot Rod Deluxe IV",     category: "Amp",    price: 900,  essential: false, match: 8,  why: "Cheaper Fender clean amp alternative. More headroom than the Princeton." },
+      { name: "Ibanez TS9 Tube Screamer",     category: "Pedal",  price: 120,  essential: true,  match: 10, why: "SRV's TS-808 is the original mid-hump pedal. The TS9 is the modern equivalent." },
+      { name: "Dunlop Cry Baby Wah",          category: "Pedal",  price: 100,  essential: true,  match: 8,  why: "Wah is core to Voodoo Chile (Slight Return) and his Hendrix covers." },
+      { name: "Boss FV-500H Volume Pedal",    category: "Pedal",  price: 130,  essential: false, match: 6,  why: "SRV used a volume pedal for swells. Optional but adds dynamic control." },
+    ],
+  },
+};
+
+// Common gear items the user might already own (to filter from recommendations)
+const COMMON_GEAR = [
+  { id: "strat",         name: "Stratocaster (any)",         category: "Guitar", matches: ["Fender Player Stratocaster", "Fender Vintera 50s Stratocaster", "PRS Silver Sky SE"] },
+  { id: "tele",          name: "Telecaster (any)",           category: "Guitar", matches: ["Fender Player Telecaster"] },
+  { id: "lespaul",       name: "Les Paul (any)",             category: "Guitar", matches: [] },
+  { id: "superstrat",    name: "Superstrat / EVH-style",     category: "Guitar", matches: ["EVH Wolfgang Standard", "Charvel Pro-Mod DK24"] },
+  { id: "fender_amp",    name: "Fender clean amp",           category: "Amp",    matches: ["Fender Hot Rod Deluxe IV", "Fender '65 Princeton Reverb Reissue"] },
+  { id: "marshall_amp",  name: "Marshall amp",               category: "Amp",    matches: ["Marshall Origin 20H Head"] },
+  { id: "vox_amp",       name: "Vox AC15 / AC30",            category: "Amp",    matches: ["Vox AC15C1"] },
+  { id: "high_gain_amp", name: "High-gain amp (5150, etc.)", category: "Amp",    matches: ["EVH 5150III LBX 15W"] },
+  { id: "tube_screamer", name: "Tube Screamer",              category: "Pedal",  matches: ["Ibanez TS9 Tube Screamer"] },
+  { id: "klon",          name: "Klon-style overdrive",       category: "Pedal",  matches: ["J. Rockett Archer Klon Clone", "Wampler Tumnus Mini"] },
+  { id: "fuzz",          name: "Fuzz pedal",                 category: "Pedal",  matches: ["Dunlop JHM1 Hendrix Fuzz Face", "Electro-Harmonix Big Muff Pi"] },
+  { id: "wah",           name: "Wah pedal",                  category: "Pedal",  matches: ["Dunlop Cry Baby Wah"] },
+  { id: "delay",         name: "Delay pedal",                category: "Pedal",  matches: ["Boss DD-8 Digital Delay", "TC Electronic Flashback 2", "Electro-Harmonix Deluxe Memory Man"] },
+  { id: "phaser",        name: "Phaser",                     category: "Pedal",  matches: ["MXR Phase 90"] },
+  { id: "modulation",    name: "Chorus / flanger",           category: "Pedal",  matches: ["MXR EVH Flanger", "EHX Stereo Electric Mistress"] },
+  { id: "compressor",    name: "Compressor",                 category: "Pedal",  matches: ["Keeley Compressor Plus"] },
+];
+
+// ============================================================
+// STATE
+// ============================================================
+let selectedArtistKey = null;
+let budget = 1500;
+let ownedGear = new Set();
+
+// ============================================================
+// RENDER UI
+// ============================================================
+function renderArtists() {
+  const grid = document.getElementById('artistGrid');
+  grid.innerHTML = Object.entries(ARTISTS).map(([key, a]) => `
+    <div class="artist-card" id="artist-${key}" onclick="selectArtist('${key}')">
+      <div class="artist-name">${a.name}</div>
+      <div class="artist-tone">${a.tone}</div>
+    </div>
+  `).join('');
+}
+
+function renderCurrentGear() {
+  const grid = document.getElementById('currentGearGrid');
+  grid.innerHTML = COMMON_GEAR.map(g => `
+    <label class="gear-item" id="gear-${g.id}">
+      <input type="checkbox" onchange="toggleOwned('${g.id}', this)">
+      <div>
+        <div class="gear-item-text">${g.name}</div>
+        <div class="gear-item-category">${g.category}</div>
+      </div>
+    </label>
+  `).join('');
+}
+
+function selectArtist(key) {
+  selectedArtistKey = key;
+  document.querySelectorAll('.artist-card').forEach(c => c.classList.remove('selected'));
+  document.getElementById('artist-' + key).classList.add('selected');
+  updateButton();
+}
+
+function updateBudget() {
+  budget = parseInt(document.getElementById('budgetSlider').value);
+  document.getElementById('budgetAmount').textContent = '$' + budget.toLocaleString();
+}
+
+function toggleOwned(id, el) {
+  if (el.checked) {
+    ownedGear.add(id);
+    el.closest('.gear-item').classList.add('checked');
+  } else {
+    ownedGear.delete(id);
+    el.closest('.gear-item').classList.remove('checked');
+  }
+}
+
+function updateButton() {
+  document.getElementById('recommendBtn').disabled = !selectedArtistKey;
+}
+
+// ============================================================
+// RECOMMENDATION ALGORITHM
+// 1. Filter artist's rig: drop pieces user already owns equivalent of
+// 2. Sort remaining by match score (highest first), then by essential
+// 3. Greedily pack into budget — essentials first, then alternatives
+// 4. Return ranked list with running total
+// ============================================================
+function generateRecommendations() {
+  if (!selectedArtistKey) return;
+  const artist = ARTISTS[selectedArtistKey];
+
+  // Build "owned items" set from selected categories
+  const ownedItems = new Set();
+  ownedGear.forEach(id => {
+    const g = COMMON_GEAR.find(c => c.id === id);
+    if (g) g.matches.forEach(m => ownedItems.add(m));
+  });
+
+  // Filter rig
+  const candidates = artist.rig
+    .filter(item => !ownedItems.has(item.name))
+    .sort((a, b) => {
+      // Essentials first, then by match score
+      if (a.essential !== b.essential) return a.essential ? -1 : 1;
+      return b.match - a.match;
+    });
+
+  // Greedy pack into budget
+  const picked = [];
+  let runningTotal = 0;
+  for (const item of candidates) {
+    if (runningTotal + item.price <= budget) {
+      picked.push(item);
+      runningTotal += item.price;
+    }
+  }
+
+  renderResults(artist, picked, runningTotal, ownedItems);
+}
+
+function renderResults(artist, picked, total, ownedItems) {
+  document.getElementById('emptyState').style.display = 'none';
+  const out = document.getElementById('resultsContent');
+  out.style.display = 'block';
+
+  if (picked.length === 0) {
+    out.innerHTML = `
+      <div class="results-header">
+        <div class="results-title">Your ${artist.name} rig</div>
+        <div class="results-summary">Nothing to recommend within your budget.</div>
+      </div>
+      <div class="empty-state">
+        Either your budget is too low for the essentials, or you already own everything we'd suggest. Try raising the budget or unchecking a few owned items.
+      </div>
+    `;
+    return;
+  }
+
+  const ownedList = ownedItems.size > 0
+    ? `<div class="results-summary">Filtered out gear you already own.</div>`
+    : '';
+
+  out.innerHTML = `
+    <div class="results-header">
+      <div class="results-title">Your ${artist.name} rig</div>
+      <div class="results-summary">${picked.length} pieces of gear, ranked by importance to the target tone.</div>
+      ${ownedList}
+    </div>
+    ${picked.map((item, idx) => `
+      <div class="recommendation">
+        <div class="rec-rank">#${idx + 1}</div>
+        <div class="rec-info">
+          <div class="rec-name">${item.name}</div>
+          <div>
+            <span class="rec-category">${item.category}</span>
+            <span class="rec-tag ${item.essential ? 'essential' : 'alternative'}">${item.essential ? 'Essential' : 'Alternative'}</span>
+          </div>
+          <div class="rec-explanation">${item.why}</div>
+        </div>
+        <div class="rec-price">
+          <div class="rec-price-amount">$${item.price.toLocaleString()}</div>
+          <div class="rec-price-note">approx.</div>
+        </div>
+      </div>
+    `).join('')}
+    <div class="total-summary">
+      <div>
+        <div class="total-label">Total estimate</div>
+        <div class="total-amount">$${total.toLocaleString()}</div>
+      </div>
+      <div class="total-budget-note">
+        of <strong>$${budget.toLocaleString()}</strong> budget<br>
+        <span class="${total <= budget ? 'ok' : 'over'}">
+          ${total <= budget ? '$' + (budget - total).toLocaleString() + ' remaining' : '$' + (total - budget).toLocaleString() + ' over'}
+        </span>
+      </div>
+    </div>
+    <div class="disclaimer">
+      <strong>Reminder:</strong> Tone is more than gear. Studio recordings are shaped by mics, room, post-production, and the artist's hands. Demo at a guitar shop before you buy if you can. ToneStack is a starting point, not a guarantee.
+    </div>
+  `;
+}
+
+// ============================================================
+// INIT
+// ============================================================
+renderArtists();
+renderCurrentGear();
+</script>
+
+</body>
+</html>
